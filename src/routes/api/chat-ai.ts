@@ -686,9 +686,9 @@ const AGENT_RUN_WAIT_MS = 30_000;
  * Wide enough to cover a real customer typing several short messages in a
  * row, so one run reads the whole burst and answers it with a single reply.
  */
-const AGENT_BURST_QUIET_MS = 2_500;
+const AGENT_BURST_QUIET_MS = 1_200;
 /** Hard cap on how long a run waits for a burst to end. */
-const AGENT_BURST_MAX_WAIT_MS = 9_000;
+const AGENT_BURST_MAX_WAIT_MS = 4_000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
@@ -4525,12 +4525,12 @@ export const Route = createFileRoute("/api/chat-ai")({
             }
           }
 
-          // Cumulative customer profile update: merges the profile built from
-          // the entire prior history with every customer message that arrived
-          // since, then rewrites it as a structured personal profile
-          // (communication style, purchasing power, preferences, behaviour).
-          // Prices and brand-owner data are stripped before persisting.
-          if (customer?.id) {
+          // Cumulative profile + episodic memory. Both are BOOKKEEPING for the
+          // NEXT turn: the customer's reply is already stored, so they must
+          // never sit in front of it. They run in parallel with each other and
+          // are awaited only after the reply has been sent back.
+          const profileUpdate = (async () => {
+            if (!customer?.id) return;
             try {
               const {
                 loadCustomerMessagesSince,
@@ -4562,12 +4562,10 @@ export const Route = createFileRoute("/api/chat-ai")({
             } catch (e) {
               console.error("[chat-ai] cumulative profile update skipped");
             }
-          }
+          })();
 
-          // Episodic memory update: merges everything remembered so far with
-          // the dialogue (customer + agent) that happened since, so the agent
-          // never forgets a past request, complaint, decision or promise.
-          if (customer?.id) {
+          const memoryUpdate = (async () => {
+            if (!customer?.id) return;
             try {
               const {
                 loadDialogueSince,
@@ -4599,7 +4597,11 @@ export const Route = createFileRoute("/api/chat-ai")({
             } catch (e) {
               console.error("[chat-ai] cumulative memory update skipped");
             }
-          }
+          })();
+
+          await Promise.all([profileUpdate, memoryUpdate]);
+
+
 
 
           await releaseRun?.();

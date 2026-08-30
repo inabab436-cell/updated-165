@@ -17,7 +17,7 @@
  * never block a customer's reply.
  */
 
-const MODEL = "google/gemini-2.5-flash";
+const MODEL = "google/gemini-2.5-flash-lite";
 
 const SYSTEM = [
   "You are a strict OUTBOUND FILTER sitting between an internal AI sales agent and a real customer in a chat.",
