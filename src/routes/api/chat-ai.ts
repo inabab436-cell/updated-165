@@ -796,6 +796,11 @@ export async function waitForAgentRunTurn(options: {
   wait: () => Promise<void>;
   now: () => number;
   waitMs: number;
+  /**
+   * Called when the wait expired and the message is still uncovered. Returning
+   * true means the run was taken over and this request must reply.
+   */
+  takeOver?: () => Promise<boolean>;
 }): Promise<boolean> {
   const deadline = options.now() + options.waitMs;
   while (true) {
@@ -807,10 +812,15 @@ export async function waitForAgentRunTurn(options: {
       }
       return true;
     }
-    if (options.now() >= deadline) return false;
+    if (options.now() >= deadline) {
+      if (!options.takeOver) return false;
+      if (await options.isCovered()) return false;
+      return await options.takeOver();
+    }
     await options.wait();
   }
 }
+
 
 async function latestUserMessageAt(
   supabase: any,
