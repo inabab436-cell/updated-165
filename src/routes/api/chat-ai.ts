@@ -670,7 +670,17 @@ export function pinSnapshotLast<T extends { role: string; content?: unknown }>(
 // correct, or change the subject.
 // ---------------------------------------------------------------------------
 /** A claimed run older than this is considered dead (crashed worker). */
-const AGENT_RUN_STALE_MS = 120_000;
+const AGENT_RUN_STALE_MS = 60_000;
+/**
+ * How long a request may wait for the active run before it TAKES OVER the run.
+ * A worker that died mid-run (or was killed by a platform request limit) can
+ * never release its claim, and the customer's message would then stay
+ * unanswered forever. So the wait is bounded: once it expires and the message
+ * is still not covered by any completed run, this request steals the claim and
+ * produces the reply itself.
+ */
+const AGENT_RUN_WAIT_MS = 30_000;
+
 /**
  * Silence required after the newest customer message before the run starts.
  * Wide enough to cover a real customer typing several short messages in a
@@ -724,6 +734,26 @@ async function tryClaimAgentRun(
   return Array.isArray(data) && data.length > 0;
 }
 
+/**
+ * Unconditional takeover of the run lock. Used only after the bounded wait
+ * expired while the customer's message is still unanswered: at that point the
+ * holder is either dead or its snapshot will never cover this message, and a
+ * silent conversation is worse than the (already guarded) chance of an extra
+ * reply.
+ */
+async function stealAgentRun(
+  supabase: any,
+  conversationId: string,
+  runId: string,
+): Promise<boolean> {
+  const { error } = await supabase
+    .from("conversations")
+    .update({ agent_run_id: runId, agent_run_started_at: new Date().toISOString() })
+    .eq("id", conversationId);
+  if (error && !isMissingColumnError(error)) return false;
+  return true;
+}
+
 
 async function releaseAgentRun(supabase: any, conversationId: string, runId: string) {
   try {
@@ -766,6 +796,11 @@ export async function waitForAgentRunTurn(options: {
   wait: () => Promise<void>;
   now: () => number;
   waitMs: number;
+  /**
+   * Called when the wait expired and the message is still uncovered. Returning
+   * true means the run was taken over and this request must reply.
+   */
+  takeOver?: () => Promise<boolean>;
 }): Promise<boolean> {
   const deadline = options.now() + options.waitMs;
   while (true) {
@@ -777,10 +812,15 @@ export async function waitForAgentRunTurn(options: {
       }
       return true;
     }
-    if (options.now() >= deadline) return false;
+    if (options.now() >= deadline) {
+      if (!options.takeOver) return false;
+      if (await options.isCovered()) return false;
+      return await options.takeOver();
+    }
     await options.wait();
   }
 }
+
 
 async function latestUserMessageAt(
   supabase: any,
@@ -1207,10 +1247,13 @@ export const Route = createFileRoute("/api/chat-ai")({
               await sleep(600);
             },
             now: () => Date.now(),
-            // Do not abandon a persisted customer message merely because the
-            // active model/tool run exceeds an arbitrary HTTP-duration guess.
-            // The stale-lock lease remains the crash-recovery boundary.
-            waitMs: Number.POSITIVE_INFINITY,
+            // Bounded: an unreleased claim from a worker that died (or was cut
+            // off by a platform request limit) must never leave the customer's
+            // message unanswered forever. When the wait expires and the message
+            // is still uncovered, this request takes the run over.
+            waitMs: AGENT_RUN_WAIT_MS,
+            takeOver: () => stealAgentRun(supabase, conversation_id, agentRunId),
+
           });
           if (!agentRunClaimed) {
             const msgs = await loadMessages(conversation_id);
