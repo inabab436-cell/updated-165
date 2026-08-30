@@ -734,6 +734,26 @@ async function tryClaimAgentRun(
   return Array.isArray(data) && data.length > 0;
 }
 
+/**
+ * Unconditional takeover of the run lock. Used only after the bounded wait
+ * expired while the customer's message is still unanswered: at that point the
+ * holder is either dead or its snapshot will never cover this message, and a
+ * silent conversation is worse than the (already guarded) chance of an extra
+ * reply.
+ */
+async function stealAgentRun(
+  supabase: any,
+  conversationId: string,
+  runId: string,
+): Promise<boolean> {
+  const { error } = await supabase
+    .from("conversations")
+    .update({ agent_run_id: runId, agent_run_started_at: new Date().toISOString() })
+    .eq("id", conversationId);
+  if (error && !isMissingColumnError(error)) return false;
+  return true;
+}
+
 
 async function releaseAgentRun(supabase: any, conversationId: string, runId: string) {
   try {
