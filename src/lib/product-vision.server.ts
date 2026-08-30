@@ -708,12 +708,20 @@ export async function ensureFreshProductDescriptions(
     if (staleIds.length >= limit) break;
   }
 
-  for (const productId of staleIds) {
-    try {
-      await regenerateProductDescription({ userId, productId });
-    } catch {
-      // never let one product block the freshness pass
-    }
+  // Regenerate in parallel batches: one vision call per product used to run
+  // strictly one after another, which made this pass the slowest step in the
+  // turn. Concurrency is bounded so the AI gateway is never flooded.
+  const CONCURRENCY = 5;
+  for (let i = 0; i < staleIds.length; i += CONCURRENCY) {
+    await Promise.all(
+      staleIds.slice(i, i + CONCURRENCY).map(async (productId) => {
+        try {
+          await regenerateProductDescription({ userId, productId });
+        } catch {
+          // never let one product block the freshness pass
+        }
+      }),
+    );
   }
 }
 
