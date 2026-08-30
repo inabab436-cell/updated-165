@@ -4,6 +4,8 @@ import { resolveVisitorId } from "./visitor";
 import { safeSlice } from "@/lib/safe-slice";
 import { buildAgentPrompt } from "@/lib/agent-prompt";
 import { isProductShowable, showableProductId } from "@/lib/product-media-availability";
+import { findNamedProduct } from "@/lib/product-name-match";
+
 import { buildSuggestableOptionsBlock } from "@/lib/suggestable-options";
 import { scrubAgainstInternalContext } from "@/lib/reply-egress-guard";
 import {
