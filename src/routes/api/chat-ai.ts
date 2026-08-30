@@ -1247,10 +1247,13 @@ export const Route = createFileRoute("/api/chat-ai")({
               await sleep(600);
             },
             now: () => Date.now(),
-            // Do not abandon a persisted customer message merely because the
-            // active model/tool run exceeds an arbitrary HTTP-duration guess.
-            // The stale-lock lease remains the crash-recovery boundary.
-            waitMs: Number.POSITIVE_INFINITY,
+            // Bounded: an unreleased claim from a worker that died (or was cut
+            // off by a platform request limit) must never leave the customer's
+            // message unanswered forever. When the wait expires and the message
+            // is still uncovered, this request takes the run over.
+            waitMs: AGENT_RUN_WAIT_MS,
+            takeOver: () => stealAgentRun(supabase, conversation_id, agentRunId),
+
           });
           if (!agentRunClaimed) {
             const msgs = await loadMessages(conversation_id);
