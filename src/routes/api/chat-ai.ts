@@ -670,7 +670,17 @@ export function pinSnapshotLast<T extends { role: string; content?: unknown }>(
 // correct, or change the subject.
 // ---------------------------------------------------------------------------
 /** A claimed run older than this is considered dead (crashed worker). */
-const AGENT_RUN_STALE_MS = 120_000;
+const AGENT_RUN_STALE_MS = 60_000;
+/**
+ * How long a request may wait for the active run before it TAKES OVER the run.
+ * A worker that died mid-run (or was killed by a platform request limit) can
+ * never release its claim, and the customer's message would then stay
+ * unanswered forever. So the wait is bounded: once it expires and the message
+ * is still not covered by any completed run, this request steals the claim and
+ * produces the reply itself.
+ */
+const AGENT_RUN_WAIT_MS = 30_000;
+
 /**
  * Silence required after the newest customer message before the run starts.
  * Wide enough to cover a real customer typing several short messages in a
