@@ -4,6 +4,8 @@ import { resolveVisitorId } from "./visitor";
 import { safeSlice } from "@/lib/safe-slice";
 import { buildAgentPrompt } from "@/lib/agent-prompt";
 import { isProductShowable, showableProductId } from "@/lib/product-media-availability";
+import { findNamedProduct } from "@/lib/product-name-match";
+
 import { buildSuggestableOptionsBlock } from "@/lib/suggestable-options";
 import { scrubAgainstInternalContext } from "@/lib/reply-egress-guard";
 import {
@@ -3716,16 +3718,13 @@ export const Route = createFileRoute("/api/chat-ai")({
           // therefore already part of the model's context on iteration 1, so
           // the draft text is written knowing they are being sent and the
           // extra "attachment-aware regeneration" call never fires.
-          if (customerAskedForProductPhoto(message)) {
-            const normalizedMessage = String(message ?? "").toLocaleLowerCase("ar");
-            const named = merchantData.products.find((p) => {
-              const productName = String(p.name ?? "").trim().toLocaleLowerCase("ar");
-              return (
-                productName.length >= 2 &&
-                normalizedMessage.includes(productName) &&
-                isProductShowable(p)
-              );
-            });
+          {
+            const named = findNamedProduct(
+              [message],
+              merchantData.products as any[],
+              (p: any) => isProductShowable(p),
+            ) as (typeof merchantData.products)[number] | null;
+
             if (named) {
               const color = requestedColorFor(named.id);
               try {
@@ -4034,20 +4033,18 @@ export const Route = createFileRoute("/api/chat-ai")({
             );
           }
 
-          // Deterministic sales fallback: if the customer explicitly named a
-          // saved product and the model forgot the media tool, show that
-          // product now. The id comes only from this turn's fresh inventory,
-          // and only when the product is not sold out.
+          // Deterministic sales fallback: the product the TURN is about — the
+          // one the customer named, or the one the agent's own draft reply is
+          // talking about — is shown now if the model forgot the media tool.
+          // Matching the draft reply too is what makes the text and the photo
+          // agree: the agent can no longer write "ده شكله" with nothing sent.
           if (agentAttachments.length === 0) {
-            const normalizedMessage = String(message ?? "").toLocaleLowerCase("ar");
-            const named = merchantData.products.find((p) => {
-              const productName = String(p.name ?? "").trim().toLocaleLowerCase("ar");
-              return (
-                productName.length >= 2 &&
-                normalizedMessage.includes(productName) &&
-                isProductShowable(p)
-              );
-            });
+            const named = findNamedProduct(
+              [message, reply],
+              merchantData.products as any[],
+              (p: any) => isProductShowable(p),
+            ) as (typeof merchantData.products)[number] | null;
+
             if (named) {
               const color = requestedColorFor(named.id);
               await executeAttachProductMedia(
