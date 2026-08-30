@@ -3706,6 +3706,45 @@ export const Route = createFileRoute("/api/chat-ai")({
           // How many of this turn's attachments the model has actually seen in
           // its context. Text and images share ONE response context.
           let attachmentsKnownToModel = 0;
+
+          // ---------------------------------------------------------------
+          // FAST PHOTO PATH (no AI involved).
+          // The customer named a product that exists in THIS turn's fresh
+          // snapshot and is showable, and asked for its photo. Resolving the
+          // media is pure database work, so it happens NOW — before the first
+          // model call — instead of after the whole tool loop. The images are
+          // therefore already part of the model's context on iteration 1, so
+          // the draft text is written knowing they are being sent and the
+          // extra "attachment-aware regeneration" call never fires.
+          if (customerAskedForProductPhoto(message)) {
+            const normalizedMessage = String(message ?? "").toLocaleLowerCase("ar");
+            const named = merchantData.products.find((p) => {
+              const productName = String(p.name ?? "").trim().toLocaleLowerCase("ar");
+              return (
+                productName.length >= 2 &&
+                normalizedMessage.includes(productName) &&
+                isProductShowable(p)
+              );
+            });
+            if (named) {
+              const color = requestedColorFor(named.id);
+              try {
+                await executeAttachProductMedia(
+                  JSON.stringify({ product_id: named.id, limit: 4, ...(color ? { color } : {}) }),
+                );
+              } catch {
+                // Never let the fast path break the turn; the deterministic
+                // fallback after the tool loop still covers this case.
+              }
+              if (agentAttachments.length > 0) {
+                const attCtx = buildAttachmentContextMessage(agentAttachments as any);
+                if (attCtx) {
+                  aiMessages.push(attCtx);
+                  attachmentsKnownToModel = agentAttachments.length;
+                }
+              }
+            }
+          }
           for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
             // A stalled upstream must never hang the customer's turn forever:
             // cap every gateway call and treat a timeout like a transient
