@@ -3716,16 +3716,13 @@ export const Route = createFileRoute("/api/chat-ai")({
           // therefore already part of the model's context on iteration 1, so
           // the draft text is written knowing they are being sent and the
           // extra "attachment-aware regeneration" call never fires.
-          if (customerAskedForProductPhoto(message)) {
-            const normalizedMessage = String(message ?? "").toLocaleLowerCase("ar");
-            const named = merchantData.products.find((p) => {
-              const productName = String(p.name ?? "").trim().toLocaleLowerCase("ar");
-              return (
-                productName.length >= 2 &&
-                normalizedMessage.includes(productName) &&
-                isProductShowable(p)
-              );
-            });
+          {
+            const named = findNamedProduct(
+              [message],
+              merchantData.products as any[],
+              (p: any) => isProductShowable(p),
+            ) as (typeof merchantData.products)[number] | null;
+
             if (named) {
               const color = requestedColorFor(named.id);
               try {
