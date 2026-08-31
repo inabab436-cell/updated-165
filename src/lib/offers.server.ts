@@ -174,8 +174,13 @@ export async function loadOffers(
   admin: SupabaseClient,
   userId: string | null,
   now: number = Date.now(),
-  /** Identity of the customer this snapshot is built for, when known. */
-  customerKey: string | null = null,
+  /**
+   * Identity of the customer this snapshot is built for, when known. A customer
+   * can be recorded under several keys over time (account id, phone, then the
+   * conversation), so EVERY key they may have redeemed under is accepted —
+   * otherwise a "once per customer" offer silently comes back for them.
+   */
+  customerKey: string | string[] | null = null,
 ): Promise<OffersSnapshot> {
   const empty: OffersSnapshot = { live: [], past: [] };
   if (!userId) return empty;
@@ -189,12 +194,15 @@ export async function loadOffers(
     const rows = ((data ?? []) as Record<string, unknown>[]).map(mapOfferRow);
 
     // "Once per customer": drop the offers this exact customer already used.
+    const keys = (Array.isArray(customerKey) ? customerKey : [customerKey])
+      .map((k) => (k ? String(k).trim() : ""))
+      .filter(Boolean);
     const used = new Set<string>();
-    if (customerKey && rows.length) {
+    if (keys.length && rows.length) {
       const { data: reds } = await admin
         .from("offer_redemptions")
         .select("offer_id")
-        .eq("customer_key", customerKey)
+        .in("customer_key", keys)
         .in("offer_id", rows.map((r) => r.id));
       for (const r of ((reds ?? []) as any[])) used.add(String(r.offer_id));
     }
