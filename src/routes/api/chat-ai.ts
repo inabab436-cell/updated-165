@@ -1404,17 +1404,20 @@ export const Route = createFileRoute("/api/chat-ai")({
             try {
               const { loadOffers } = await import("@/lib/offers.server");
               // Identity of this customer, so a "once per customer" offer that
-              // they already used is not offered to them again.
-              const offerCustomerKey = customer?.id
-                ? `c:${customer.id}`
-                : convo?.id
-                  ? `v:${convo.id}`
-                  : null;
+              // they already used is not offered to them again. Redemptions are
+              // recorded under whichever identity the paid order carried
+              // (account id, else phone, else conversation), so all of them are
+              // checked — one missing key would silently revive the offer.
+              const offerCustomerKeys = [
+                customer?.id ? `c:${customer.id}` : "",
+                customer?.phone ? `p:${String(customer.phone).trim()}` : "",
+                convo?.id ? `v:${convo.id}` : "",
+              ].filter(Boolean);
               return await loadOffers(
                 supabase,
                 merchantUserId,
                 Date.now(),
-                offerCustomerKey,
+                offerCustomerKeys,
               );
             } catch (e) {
               console.error("[chat-ai] offers read skipped");
