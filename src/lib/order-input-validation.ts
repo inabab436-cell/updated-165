@@ -161,8 +161,37 @@ const STREET_HINTS = [
 export interface AddressCheck extends FieldCheck {
   /** The governorate detected inside the address, if any. */
   governorate?: string | null;
+  /**
+   * True when the governorate was NOT written inside the address line itself
+   * but is already known from the conversation (the customer named it earlier,
+   * or the shipping zone was already resolved). The address then counts as
+   * complete and the agent must never ask for the governorate again.
+   */
+  governorateFromContext?: boolean;
   /** Which parts are still missing, for the agent to ask about. */
   missing: string[];
+}
+
+export interface AddressContext {
+  /** A governorate already settled for this conversation, when known. */
+  knownGovernorate?: string | null;
+  /** Earlier customer messages / shipping answers to read the governorate from. */
+  conversationTexts?: Array<string | null | undefined>;
+}
+
+/**
+ * The governorate the conversation already established, outside the address
+ * line: an explicitly known value first, then anything nameable in earlier
+ * customer text.
+ */
+function contextGovernorate(context?: AddressContext): string | null {
+  const known = detectGovernorate(String(context?.knownGovernorate ?? ""));
+  if (known) return known;
+  for (const text of context?.conversationTexts ?? []) {
+    const gov = detectGovernorate(String(text ?? ""));
+    if (gov) return gov;
+  }
+  return null;
 }
 
 export function detectGovernorate(raw: string): string | null {
@@ -181,16 +210,31 @@ export function detectGovernorate(raw: string): string | null {
  * A deliverable address needs the governorate PLUS an area/district PLUS a
  * street or an equally clear landmark. Building/flat number and landmark are
  * optional and are never required.
+ *
+ * The governorate does not have to be repeated inside the address line: if the
+ * conversation already settled it (`context`), it counts as present — asking
+ * for it again after the customer picked their governorate is the bug this
+ * parameter exists to prevent.
  */
-export function validateAddress(raw: string): AddressCheck {
+export function validateAddress(raw: string, context?: AddressContext): AddressCheck {
   const value = String(raw ?? "").trim();
   const missing: string[] = [];
-  if (!value) return { ok: false, reason: "empty", governorate: null, missing: ["governorate", "area", "street"] };
+  const fromContext = contextGovernorate(context);
+  if (!value) {
+    return {
+      ok: false,
+      reason: "empty",
+      governorate: fromContext,
+      governorateFromContext: Boolean(fromContext),
+      missing: fromContext ? ["area", "street"] : ["governorate", "area", "street"],
+    };
+  }
 
-  const governorate = detectGovernorate(value);
+  const inAddress = detectGovernorate(value);
+  const governorate = inAddress ?? fromContext;
   const normalized = normalizeText(value);
   const words = normalized.split(" ").filter(Boolean);
-  const govWords = governorate ? normalizeText(governorate).split(" ").length : 0;
+  const govWords = inAddress ? normalizeText(inAddress).split(" ").length : 0;
   const rest = words.length - govWords;
 
   if (!governorate) missing.push("governorate");
@@ -207,6 +251,7 @@ export function validateAddress(raw: string): AddressCheck {
     ok: missing.length === 0,
     reason: missing.length ? "incomplete_address" : undefined,
     governorate,
+    governorateFromContext: Boolean(!inAddress && fromContext),
     missing,
   };
 }
