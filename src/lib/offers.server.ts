@@ -174,8 +174,13 @@ export async function loadOffers(
   admin: SupabaseClient,
   userId: string | null,
   now: number = Date.now(),
-  /** Identity of the customer this snapshot is built for, when known. */
-  customerKey: string | null = null,
+  /**
+   * Identity of the customer this snapshot is built for, when known. A customer
+   * can be recorded under several keys over time (account id, phone, then the
+   * conversation), so EVERY key they may have redeemed under is accepted —
+   * otherwise a "once per customer" offer silently comes back for them.
+   */
+  customerKey: string | string[] | null = null,
 ): Promise<OffersSnapshot> {
   const empty: OffersSnapshot = { live: [], past: [] };
   if (!userId) return empty;
@@ -189,12 +194,15 @@ export async function loadOffers(
     const rows = ((data ?? []) as Record<string, unknown>[]).map(mapOfferRow);
 
     // "Once per customer": drop the offers this exact customer already used.
+    const keys = (Array.isArray(customerKey) ? customerKey : [customerKey])
+      .map((k) => (k ? String(k).trim() : ""))
+      .filter(Boolean);
     const used = new Set<string>();
-    if (customerKey && rows.length) {
+    if (keys.length && rows.length) {
       const { data: reds } = await admin
         .from("offer_redemptions")
         .select("offer_id")
-        .eq("customer_key", customerKey)
+        .in("customer_key", keys)
         .in("offer_id", rows.map((r) => r.id));
       for (const r of ((reds ?? []) as any[])) used.add(String(r.offer_id));
     }
@@ -291,7 +299,28 @@ export function buildOffersBlock(
     lines.push(
       "إلزامي: طالما فيه عرض شغّال، استدعِ calculate_offer_price قبل أي رد فيه سعر أو إجمالي، وقبل أي إجابة عن سؤال «في خصم؟»، وبعد أي تعديل في المنتجات أو الكميات. لو العميل لم يحدد الكمية اعتبرها 1 واستدعِ الأداة فورًا — ممنوع تطلب منه بيانات إضافية بدل ما تستدعيها، وممنوع ترد بسعر قبل ما تشوف نتيجتها.",
     );
-
+    lines.push(
+      "وقت الكلام عن العرض (بذكاء، جملة واحدة مختصرة، مرة واحدة في السياق ومش كل رسالة): " +
+        "١) أول مرة تقول سعر منتج مشمول بالعرض. " +
+        "٢) لو العميل سأل عن عرض أو خصم أو كود. " +
+        "٣) لو اتكلم عن السعر إنه غالي أو بيقارن أو بيتردد. " +
+        "٤) قبل تأكيد الأوردر وأنت بتقول الإجمالي. " +
+        "٥) لو العرض فيه عدد محدود أو وقت ينتهي قريب، اذكر ده كحقيقة بدون أي مبالغة أو ضغط. " +
+        "٦) لو المنتج اللي العميل بيسأل عليه مش مشمول، ممنوع تقول عليه عرض؛ ولو فيه عرض على منتج تاني اذكره مرة واحدة فقط لو كان مناسب لطلبه فعلًا.",
+    );
+    lines.push(
+      "لما تتكلم عن العرض قول تفاصيله الحقيقية كما هي بالأعلى فقط (الخصم، النطاق، الحد الأدنى، تكرار الاستفادة، الانتهاء لو موجود) — ممنوع تزود أي شرط أو ميزة أو مدة من عندك، وممنوع تقول عرض على منتج غير مذكور، وممنوع تكرر تفاصيل العرض كلها في كل رسالة.",
+    );
+    if (snapshot.live.some((o) => o.usage_limit_type === "once_per_customer")) {
+      lines.push(
+        "تنبيه: العروض المكتوبة «مرة واحدة لكل عميل» متاحة لهذا العميل الآن (اللي استفاد منها قبل كده لا يظهر لك هنا أصلًا). وضّح للعميل إنها مرة واحدة بس لو الموضوع اتفتح أو سأل عن تكرارها، ولو طلب يستخدمها في طلب تاني قول إنها مرة واحدة لكل عميل بدون وعد باستثناء.",
+      );
+    }
+    if (snapshot.live.some((o) => o.usage_limit_type === "per_order")) {
+      lines.push(
+        "العروض المكتوبة «على كل طلب للعميل» تنطبق على أي طلب جديد لنفس العميل — ممنوع تقول له إنها مرة واحدة.",
+      );
+    }
   }
 
 
